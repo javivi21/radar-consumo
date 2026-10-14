@@ -33,10 +33,23 @@ const vuelo = atom({ plugin: 'radar-consumo', key: 'vuelo' } as const, VUELO0)
 // Lectura segura: un estado guardado con forma antigua se completa con los valores por defecto.
 const leerVuelo = async ($: Parameters<typeof read>[0]): Promise<Vuelo> => ({ ...VUELO0, ...((await read($, vuelo)) ?? {}) })
 
-// Indicador de barras estilo flightdeck.
-const medidor = (pct: number, ancho: number) => {
-  const lleno = Math.max(0, Math.min(ancho, Math.round((pct / 100) * ancho)))
-  return { on: '■'.repeat(lleno), off: '□'.repeat(ancho - lleno) }
+// Metal por nivel: acero en calma, champán desde el 60 %, amarillo vivo desde el 80 %, rojo intenso desde el 90 %.
+const PALETA = {
+  calma: ['#6f86a8', '#c7d3e6'],
+  medio: ['#b89a6a', '#f0dfbd'],
+  aviso: ['#e0a612', '#ffe27a'],
+  critico: ['#e5283a', '#ff8f8a'],
+} as const
+
+const paleta = (pct: number | undefined) =>
+  pct === undefined || pct < 60 ? PALETA.calma : pct >= 90 ? PALETA.critico : pct >= 80 ? PALETA.aviso : PALETA.medio
+
+const rgb = (h: string) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16))
+
+const mezcla = (a: string, b: string, t: number) => {
+  const x = rgb(a)
+  const y = rgb(b)
+  return `#${[0, 1, 2].map(i => Math.round((x[i] ?? 0) + ((y[i] ?? 0) - (x[i] ?? 0)) * t).toString(16).padStart(2, '0')).join('')}`
 }
 
 const bonito = (id: string) => {
@@ -52,7 +65,7 @@ const crono = (ms: number) => {
 }
 
 const color = (pct: number | undefined) =>
-  pct === undefined ? undefined : pct >= 85 ? 'red' : pct >= 60 ? 'yellow' : 'green'
+  pct === undefined ? undefined : pct >= 90 ? '#ff5a5f' : pct >= 80 ? '#ffd23f' : pct >= 60 ? '#d9c3a0' : '#8fa4c0'
 
 const kilos = (n: number | undefined) => (n === undefined ? '?' : `${Math.round(n / 1000)}k`)
 
@@ -239,7 +252,7 @@ export const register: Register = on => {
     const cacheMin = ultima ? CACHE_MIN - (ahora - ultima) / 60000 : undefined
     const cacheTxt =
       cacheMin === undefined ? 'sin datos' : cacheMin > 0 ? `${Math.round(cacheMin)} min` : 'caducada'
-    const cacheColor = cacheMin === undefined ? undefined : cacheMin > 10 ? 'green' : cacheMin > 0 ? 'yellow' : 'red'
+    const cacheColor = cacheMin === undefined ? undefined : cacheMin > 10 ? '#9fb4d6' : cacheMin > 0 ? '#ffd23f' : '#ff5a5f'
 
     // Grafica en vivo: arriba, sobre la linea de siempre.
     const rCinco = ritmo(hist, ahora, 'cinco')
@@ -269,9 +282,30 @@ export const register: Register = on => {
     }
     const colPerm = (p: Permiso) =>
       p.v === 'rule' ? 'success' : p.v === 'cleared' ? 'permission' : p.v === 'ask' ? 'warning' : 'error'
-    const gCtx = medidor(f.ctxPercent ?? 0, 10)
-    const gCinco = medidor(cinco?.pct ?? 0, 10)
-    const gSemana = medidor(semana?.pct ?? 0, 10)
+    // Barra en cápsula biselada: luz arriba, sombra abajo, punta brillante, color según el nivel.
+    const barra = (pct: number, ancho = 9) => {
+      const pal = paleta(pct)
+      const lleno = pct > 0 ? Math.max(1, Math.min(ancho, Math.round((pct / 100) * ancho))) : 0
+      const celdas = Array.from({ length: lleno }, (_, i) => {
+        const base = mezcla(pal[0], pal[1], i / (lleno - 1 || 1))
+        const punta = i === lleno - 1
+        return (
+          <Text
+            key={`b${i}`}
+            color={punta ? '#ffffff' : mezcla(base, '#ffffff', 0.45)}
+            backgroundColor={punta ? mezcla(base, '#ffffff', 0.2) : mezcla(base, '#000000', 0.28)}
+          >
+            ▀
+          </Text>
+        )
+      })
+      return [
+        <Text key="ini" color={pal[0]}>◖</Text>,
+        ...celdas,
+        <Text key="vacio" color="#3a404c" backgroundColor="#23272f">{'▀'.repeat(ancho - lleno)}</Text>,
+        <Text key="fin" color="#3a404c">◗</Text>,
+      ]
+    }
     const quedan = f.ctxTokens === undefined ? undefined : f.ctxWindow - f.ctxTokens
 
     return (
@@ -295,22 +329,19 @@ export const register: Register = on => {
           <Text dimColor> | ctx </Text>
           <Text color={color(f.ctxPercent)}>{sCtx}</Text>
           <Text dimColor> | </Text>
-          <Text color={rCinco !== undefined && rCinco > 0.05 ? 'yellow' : 'green'}>{eta}</Text>
+          <Text color={rCinco !== undefined && rCinco > 0.05 ? '#d9c3a0' : '#9fd0c7'}>{eta}</Text>
         </Box>
         <Box flexWrap="nowrap">
           <Text dimColor>ctx </Text>
-          <Text color={color(f.ctxPercent)}>{gCtx.on}</Text>
-          <Text color="subtle">{gCtx.off}</Text>
+          {barra(f.ctxPercent ?? 0)}
           <Text color={color(f.ctxPercent)} bold>{` ${f.ctxPercent ?? '?'}%`}</Text>
           <Text dimColor> {kilos(f.ctxTokens)}/{kilos(f.ctxWindow)}</Text>
           <Text dimColor> │ 5h </Text>
-          <Text color={color(cinco?.pct)}>{gCinco.on}</Text>
-          <Text color="subtle">{gCinco.off}</Text>
+          {barra(cinco?.pct ?? 0)}
           <Text color={color(cinco?.pct)} bold>{` ${cinco ? `${cinco.pct}%` : '?'}`}</Text>
           <Text dimColor>{cinco?.reinicio ? ` ↻${cinco.reinicio.replace(/ /g, '')}` : ''}</Text>
           <Text dimColor> │ sem </Text>
-          <Text color={color(semana?.pct)}>{gSemana.on}</Text>
-          <Text color="subtle">{gSemana.off}</Text>
+          {barra(semana?.pct ?? 0)}
           <Text color={color(semana?.pct)} bold>{` ${semana ? `${semana.pct}%` : '?'}`}</Text>
           <Text dimColor> │ </Text>
           <Text color={cacheColor}>caché {cacheTxt.replace(' min', 'm')}</Text>
