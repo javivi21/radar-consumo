@@ -1,0 +1,6 @@
+{
+  "name": "radar-consumo",
+  "version": "0.1.0",
+  "description": "Franja encima del prompt con el contexto restante, la sesion de 5 h, la semana y la cache.",
+  "types": "./types/index.d.ts"
+}
